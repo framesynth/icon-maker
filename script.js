@@ -30,7 +30,7 @@ let offsetY = 0;
 async function loadFrames() {
   try {
     const res = await fetch(WORKER_LIST_API, { cache: "no-store" });
-    const data = await res.json(); 
+    const data = await res.json();
 
     if (!data.success) {
       frameSelect.innerHTML = '<option value="">未選択</option>';
@@ -43,10 +43,8 @@ async function loadFrames() {
 
     frames.forEach(frame => {
       const option = document.createElement("option");
-
       option.textContent = frame.displayName || frame.filename || "名称未設定";
       option.value = frame.url;
-
       frameSelect.appendChild(option);
     });
 
@@ -96,7 +94,8 @@ imageInput.addEventListener("change", (e) => {
 
       const fitScale = Math.min(cw / iw, ch / ih);
       scale = fitScale;
-      minScale = fitScale * 0.3;
+      minScale = fitScale * 0.25;
+      maxScale = fitScale * 6.0;
 
       offsetX = cw / 2 - (iw * scale) / 2;
       offsetY = ch / 2 - (ih * scale) / 2;
@@ -127,14 +126,16 @@ frameSelect.addEventListener("change", () => {
 });
 
 // ================================
-// ▼ PointerEvent 統合版（ドラッグ + ピンチズーム）
+// ▼ PointerEvent（ドラッグ + ピンチズーム）完全版
 // ================================
 let pointerState = {
   pointers: new Map(),
   isDragging: false,
   lastX: 0,
   lastY: 0,
-  lastDist: 0
+  lastDist: 0,
+  lastCenterX: 0,
+  lastCenterY: 0
 };
 
 canvas.addEventListener("pointerdown", (e) => {
@@ -158,6 +159,11 @@ canvas.addEventListener("pointerdown", (e) => {
       pts[0].x - pts[1].x,
       pts[0].y - pts[1].y
     );
+
+    pointerState.lastCenterX = (pts[0].x + pts[1].x) / 2;
+    pointerState.lastCenterY = (pts[0].y + pts[1].y) / 2;
+
+    pointerState.isDragging = false;
   }
 });
 
@@ -178,17 +184,17 @@ canvas.addEventListener("pointermove", (e) => {
       pts[0].y - pts[1].y
     );
 
-    const centerX = (pts[0].x + pts[1].x) / 2;
-    const centerY = (pts[0].y + pts[1].y) / 2;
-
     const oldScale = scale;
     const delta = (dist - pointerState.lastDist) * 0.004;
 
     scale = Math.max(minScale, Math.min(maxScale, scale + delta));
     const zoomRatio = scale / oldScale;
 
-    offsetX = centerX - (centerX - offsetX) * zoomRatio;
-    offsetY = centerY - (centerY - offsetY) * zoomRatio;
+    const cx = pointerState.lastCenterX;
+    const cy = pointerState.lastCenterY;
+
+    offsetX = cx - (cx - offsetX) * zoomRatio;
+    offsetY = cy - (cy - offsetY) * zoomRatio;
 
     pointerState.lastDist = dist;
     redraw();
@@ -208,15 +214,27 @@ canvas.addEventListener("pointermove", (e) => {
 
 canvas.addEventListener("pointerup", (e) => {
   pointerState.pointers.delete(e.pointerId);
-  pointerState.isDragging = false;
+
+  if (pointerState.pointers.size === 1) {
+    const [remaining] = pointerState.pointers.values();
+    pointerState.isDragging = true;
+    pointerState.lastX = remaining.x;
+    pointerState.lastY = remaining.y;
+  } else {
+    pointerState.isDragging = false;
+    pointerState.lastDist = 0;
+  }
 });
 
 canvas.addEventListener("pointercancel", (e) => {
   pointerState.pointers.delete(e.pointerId);
   pointerState.isDragging = false;
+  pointerState.lastDist = 0;
 });
 
-// ▼ PC: Wheel zoom
+// ================================
+// ▼ ホイールズーム（ピンチと同じ中心計算）
+// ================================
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
 
@@ -237,7 +255,7 @@ canvas.addEventListener("wheel", (e) => {
 });
 
 // ================================
-// ▼ Drawing process
+// ▼ Drawing process（フレームもズーム）
 // ================================
 function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -254,7 +272,7 @@ function redraw() {
 }
 
 // ================================
-// ▼ High-resolution save（Safari＝表示のみ）
+// ▼ High-resolution save
 // ================================
 function saveHighRes() {
   if (!baseImage) {
