@@ -127,128 +127,96 @@ frameSelect.addEventListener("change", () => {
 });
 
 // ================================
-// ▼ Pinch distance
+// ▼ PointerEvent 統合版（ドラッグ + ピンチズーム）
 // ================================
-function getDistance(touches) {
-  const dx = touches[0].clientX - touches[1].clientX;
-  const dy = touches[0].clientY - touches[1].clientY;
-  return Math.sqrt(dx * dx + dy * dy);
-}
+let pointerState = {
+  pointers: new Map(),
+  isDragging: false,
+  lastX: 0,
+  lastY: 0,
+  lastDist: 0
+};
 
-// ▼ Pinch center
-function getCenter(touches) {
-  return {
-    x: (touches[0].clientX + touches[1].clientX) / 2,
-    y: (touches[0].clientY + touches[1].clientY) / 2
-  };
-}
-
-let isDragging = false;
-let lastX = null;
-let lastY = null;
-let lastDist = null;
-
-// ================================
-// ▼ Touch start
-// ================================
-canvas.addEventListener("touchstart", (e) => {
-  const rect = canvas.getBoundingClientRect();
-
-  if (e.touches.length === 1) {
-    isDragging = true;
-    lastX = e.touches[0].clientX - rect.left;
-    lastY = e.touches[0].clientY - rect.top;
-  }
-
-  if (e.touches.length === 2) {
-    lastDist = getDistance(e.touches);
-  }
-});
-
-// ================================
-// ▼ Touch move (pinch + drag)
-// ================================
-canvas.addEventListener("touchmove", (e) => {
-  e.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-
-  if (e.touches.length === 2) {
-    const dist = getDistance(e.touches);
-    const center = getCenter(e.touches);
-    const cx = center.x - rect.left;
-    const cy = center.y - rect.top;
-
-    const oldScale = scale;
-    const delta = (dist - lastDist) * 0.004;
-    scale = Math.max(minScale, Math.min(maxScale, scale + delta));
-
-    const zoomRatio = scale / oldScale;
-    offsetX = cx - (cx - offsetX) * zoomRatio;
-    offsetY = cy - (cy - offsetY) * zoomRatio;
-
-    lastDist = dist;
-    redraw();
-    return;
-  }
-
-  if (e.touches.length === 1 && isDragging) {
-    const x = e.touches[0].clientX - rect.left;
-    const y = e.touches[0].clientY - rect.top;
-    offsetX += x - lastX;
-    offsetY += y - lastY;
-    lastX = x;
-    lastY = y;
-    redraw();
-  }
-}, { passive: false });
-
-// ================================
-// ▼ Touch end
-// ================================
-canvas.addEventListener("touchend", () => {
-  isDragging = false;
-  lastX = null;
-  lastY = null;
-  lastDist = null;
-});
-
-// ================================
-// ▼ PC: Drag move
-// ================================
-canvas.addEventListener("mousedown", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  isDragging = true;
-  lastX = e.clientX - rect.left;
-  lastY = e.clientY - rect.top;
-});
-
-canvas.addEventListener("mousemove", (e) => {
-  if (!isDragging) return;
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
 
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
 
-  offsetX += x - lastX;
-  offsetY += y - lastY;
+  pointerState.pointers.set(e.pointerId, { x, y });
 
-  lastX = x;
-  lastY = y;
+  if (pointerState.pointers.size === 1) {
+    pointerState.isDragging = true;
+    pointerState.lastX = x;
+    pointerState.lastY = y;
+  }
 
-  redraw();
+  if (pointerState.pointers.size === 2) {
+    const pts = [...pointerState.pointers.values()];
+    pointerState.lastDist = Math.hypot(
+      pts[0].x - pts[1].x,
+      pts[0].y - pts[1].y
+    );
+  }
 });
 
-canvas.addEventListener("mouseup", () => {
-  isDragging = false;
+canvas.addEventListener("pointermove", (e) => {
+  if (!pointerState.pointers.has(e.pointerId)) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  pointerState.pointers.set(e.pointerId, { x, y });
+
+  if (pointerState.pointers.size === 2) {
+    const pts = [...pointerState.pointers.values()];
+
+    const dist = Math.hypot(
+      pts[0].x - pts[1].x,
+      pts[0].y - pts[1].y
+    );
+
+    const centerX = (pts[0].x + pts[1].x) / 2;
+    const centerY = (pts[0].y + pts[1].y) / 2;
+
+    const oldScale = scale;
+    const delta = (dist - pointerState.lastDist) * 0.004;
+
+    scale = Math.max(minScale, Math.min(maxScale, scale + delta));
+    const zoomRatio = scale / oldScale;
+
+    offsetX = centerX - (centerX - offsetX) * zoomRatio;
+    offsetY = centerY - (centerY - offsetY) * zoomRatio;
+
+    pointerState.lastDist = dist;
+    redraw();
+    return;
+  }
+
+  if (pointerState.isDragging && pointerState.pointers.size === 1) {
+    offsetX += x - pointerState.lastX;
+    offsetY += y - pointerState.lastY;
+
+    pointerState.lastX = x;
+    pointerState.lastY = y;
+
+    redraw();
+  }
 });
 
-canvas.addEventListener("mouseleave", () => {
-  isDragging = false;
+canvas.addEventListener("pointerup", (e) => {
+  pointerState.pointers.delete(e.pointerId);
+  pointerState.isDragging = false;
 });
 
-// ================================
+canvas.addEventListener("pointercancel", (e) => {
+  pointerState.pointers.delete(e.pointerId);
+  pointerState.isDragging = false;
+});
+
 // ▼ PC: Wheel zoom
-// ================================
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
 
@@ -324,21 +292,16 @@ function saveHighRes() {
   const ua = navigator.userAgent;
   const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
 
-  // ▼ Safari専用：勝手に新規タブを開かず、表示を押したら同じタブで開く
   if (isSafari) {
     saveCanvas.toBlob((blob) => {
       const blobURL = URL.createObjectURL(blob);
-
-      // Safariはここで「表示／ダウンロード」ダイアログを出す
       window.location.href = blobURL;
-
       alert("Safariでは画像が表示されます。表示された画像を長押しして保存してください。");
     }, "image/png");
 
     return;
   }
 
-  // ▼ Chrome / Android / PC：通常のダウンロード
   saveCanvas.toBlob((blob) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
